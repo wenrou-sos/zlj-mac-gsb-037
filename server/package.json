@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "nodemon app.js",
     "start": "node app.js",
-    "init:db": "node initDB.js"
+    "init:db": "node initDB.js",
+    "test": "node test/api.test.js && node test/corrections.test.js",
+    "test:corrections": "node test/corrections.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

@@ -1,6 +1,6 @@
 const mysql = require('mysql2/promise');
-const fs = require('fs');
 const path = require('path');
+const { execSqlFile } = require('./utils/execSqlFile');
 require('dotenv').config();
 
 async function initDatabase() {
@@ -10,20 +10,17 @@ async function initDatabase() {
       host: process.env.DB_HOST,
       port: process.env.DB_PORT,
       user: process.env.DB_USER,
-      password: process.env.DB_PASSWORD,
-      multipleStatements: true
+      password: process.env.DB_PASSWORD
     });
 
     console.log('MySQL 连接成功！');
 
     const sqlPath = path.join(__dirname, 'sql', 'init.sql');
-    const sql = fs.readFileSync(sqlPath, 'utf8');
-
     console.log('正在执行初始化脚本...');
-    await connection.query(sql);
+    await execSqlFile(connection, sqlPath);
 
     console.log('✅ 数据库初始化成功！');
-    console.log('📊 已创建表: production_lines, products, users, work_orders, production_records');
+    console.log('📊 已创建表: production_lines, products, users, work_orders, production_records, record_correction_requests, record_revisions');
     console.log('👤 主管账号: admin / 123456');
     console.log('👤 操作工账号: worker01~worker05 / 123456');
 

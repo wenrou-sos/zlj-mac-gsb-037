@@ -26,6 +26,18 @@ export const getRecords = (params) => api.get('/records', { params })
 
 export const submitRecord = (data) => api.post('/records', data)
 
+export const getRecordRevisions = (recordId) => api.get(`/records/${recordId}/revisions`)
+
+export const getCorrections = (params) => api.get('/corrections', { params })
+
+export const getCorrectionDetail = (id) => api.get(`/corrections/${id}`)
+
+export const createCorrection = (data) => api.post('/corrections', data)
+
+export const approveCorrection = (id, data) => api.post(`/corrections/${id}/approve`, data)
+
+export const rejectCorrection = (id, data) => api.post(`/corrections/${id}/reject`, data)
+
 export const getUsers = (params) => api.get('/users', { params })
 
 export const getOverviewStats = () => api.get('/stats/overview')

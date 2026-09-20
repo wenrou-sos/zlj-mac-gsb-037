@@ -45,6 +45,10 @@
               <el-icon><Document /></el-icon>
               <span>生产记录</span>
             </el-menu-item>
+            <el-menu-item index="/corrections">
+              <el-icon><Stamp /></el-icon>
+              <span>纠错审批</span>
+            </el-menu-item>
           </template>
           <template v-else>
             <el-menu-item index="/dashboard/index">
@@ -58,6 +62,10 @@
             <el-menu-item index="/records">
               <el-icon><Document /></el-icon>
               <span>生产记录</span>
+            </el-menu-item>
+            <el-menu-item index="/corrections">
+              <el-icon><EditPen /></el-icon>
+              <span>我的纠错</span>
             </el-menu-item>
           </template>
         </el-menu>
@@ -73,7 +81,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
-import { Monitor, Tickets, Goods, Document, EditPen } from '@element-plus/icons-vue'
+import { Monitor, Tickets, Goods, Document, EditPen, Stamp } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()

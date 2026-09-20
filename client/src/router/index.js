@@ -72,6 +72,18 @@ const routes = [
         meta: { title: '生产记录', roles: [1, 2] }
       }
     ]
+  },
+  {
+    path: '/corrections',
+    component: () => import('@/views/layout/Layout.vue'),
+    children: [
+      {
+        path: '',
+        name: 'Corrections',
+        component: () => import('@/views/Corrections.vue'),
+        meta: { title: '纠错审批', roles: [1, 2] }
+      }
+    ]
   }
 ]
 

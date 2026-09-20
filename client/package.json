@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node tests/compile-dashboard.mjs",
+    "test": "node tests/compile-dashboard.mjs && node tests/compile-views.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
