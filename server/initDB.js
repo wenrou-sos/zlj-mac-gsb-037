@@ -23,7 +23,7 @@ async function initDatabase() {
     await connection.query(sql);
 
     console.log('✅ 数据库初始化成功！');
-    console.log('📊 已创建表: production_lines, products, users, work_orders, production_records');
+    console.log('📊 已创建表: production_lines, products, users, work_orders, production_records, record_corrections, record_revisions');
     console.log('👤 主管账号: admin / 123456');
     console.log('👤 操作工账号: worker01~worker05 / 123456');
 

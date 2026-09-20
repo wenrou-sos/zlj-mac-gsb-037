@@ -24,7 +24,24 @@ export const deleteWorkOrder = (id) => api.delete(`/workorders/${id}`)
 
 export const getRecords = (params) => api.get('/records', { params })
 
+export const getRecordDetail = (id) => api.get(`/records/${id}`)
+
 export const submitRecord = (data) => api.post('/records', data)
+
+// ---- 生产记录纠错审批 ----
+export const getCorrections = (params) => api.get('/corrections', { params })
+
+export const getCorrectionDetail = (id) => api.get(`/corrections/${id}`)
+
+export const createCorrection = (data) => api.post('/corrections', data)
+
+export const approveCorrection = (id, reviewComment) =>
+  api.post(`/corrections/${id}/approve`, { review_comment: reviewComment || '' })
+
+export const rejectCorrection = (id, reviewComment) =>
+  api.post(`/corrections/${id}/reject`, { review_comment: reviewComment })
+
+export const getRecordTimeline = (recordId) => api.get(`/corrections/records/${recordId}/timeline`)
 
 export const getUsers = (params) => api.get('/users', { params })
 

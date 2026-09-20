@@ -8,6 +8,7 @@ const userRoutes = require('./routes/users');
 const workOrderRoutes = require('./routes/workOrders');
 const recordRoutes = require('./routes/records');
 const statsRoutes = require('./routes/stats');
+const correctionRoutes = require('./routes/corrections');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -21,6 +22,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/workorders', workOrderRoutes);
 app.use('/api/records', recordRoutes);
+app.use('/api/corrections', correctionRoutes);
 app.use('/api/stats', statsRoutes);
 
 app.get('/api/health', (req, res) => {
@@ -28,8 +30,11 @@ app.get('/api/health', (req, res) => {
 });
 
 app.use((err, req, res, next) => {
+  if (err && err.name === 'HttpError') {
+    return res.status(err.status).json({ success: false, code: err.code, message: err.message });
+  }
   console.error(err.stack);
-  res.status(500).json({ error: true, message: '服务器内部错误', detail: err.message });
+  res.status(500).json({ error: true, success: false, message: '服务器内部错误', detail: err.message });
 });
 
 app.listen(PORT, () => {

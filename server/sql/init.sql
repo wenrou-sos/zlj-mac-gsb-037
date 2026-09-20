@@ -66,20 +66,103 @@ CREATE TABLE work_orders (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工单表';
 
 -- 生产进度记录表
+-- current_version: 当前生效版本号 0=原始上报，每批准一次纠错 +1
+DROP TABLE IF EXISTS record_revisions;
+DROP TABLE IF EXISTS record_corrections;
 DROP TABLE IF EXISTS production_records;
 CREATE TABLE production_records (
   id INT AUTO_INCREMENT PRIMARY KEY,
   order_id INT NOT NULL COMMENT '工单ID',
   user_id INT NOT NULL COMMENT '上报人ID',
-  completed_qty INT NOT NULL DEFAULT 0 COMMENT '本次完成数量',
-  defect_qty INT NOT NULL DEFAULT 0 COMMENT '本次不良数量',
-  work_hours DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '本次工时(小时)',
-  defect_reason VARCHAR(500) DEFAULT NULL COMMENT '不良原因',
-  remark VARCHAR(500) DEFAULT NULL COMMENT '备注',
+  completed_qty INT NOT NULL DEFAULT 0 COMMENT '本次完成数量（当前生效值）',
+  defect_qty INT NOT NULL DEFAULT 0 COMMENT '本次不良数量（当前生效值）',
+  work_hours DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '本次工时(小时，当前生效值)',
+  defect_reason VARCHAR(500) DEFAULT NULL COMMENT '不良原因（当前生效值）',
+  remark VARCHAR(500) DEFAULT NULL COMMENT '备注（当前生效值）',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  current_version INT NOT NULL DEFAULT 0 COMMENT '当前生效版本号：0=原始上报',
+  last_revised_at DATETIME DEFAULT NULL COMMENT '最近修订生效时间',
   FOREIGN KEY (order_id) REFERENCES work_orders(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='生产进度记录表';
+
+-- 纠错申请表（status: 0待审批 1已批准 2已驳回）
+-- pending_flag 虚拟列 + 唯一索引：同一记录最多一条待审批申请（MySQL 5.7 兼容写法）
+CREATE TABLE record_corrections (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  record_id INT NOT NULL COMMENT '被纠错的生产记录ID',
+  applicant_id INT NOT NULL COMMENT '申请人ID（必须为记录上报人本人）',
+
+  original_completed_qty INT NOT NULL COMMENT '申请时快照：原完成数',
+  original_defect_qty INT NOT NULL COMMENT '申请时快照：原不良数',
+  original_work_hours DECIMAL(10,2) NOT NULL COMMENT '申请时快照：原工时',
+  original_defect_reason VARCHAR(500) DEFAULT NULL COMMENT '申请时快照：原不良原因',
+  original_remark VARCHAR(500) DEFAULT NULL COMMENT '申请时快照：原备注',
+
+  corrected_completed_qty INT NOT NULL COMMENT '修正后完成数',
+  corrected_defect_qty INT NOT NULL COMMENT '修正后不良数',
+  corrected_work_hours DECIMAL(10,2) NOT NULL COMMENT '修正后工时',
+  corrected_defect_reason VARCHAR(500) DEFAULT NULL COMMENT '修正后不良原因',
+  corrected_remark VARCHAR(500) DEFAULT NULL COMMENT '修正后备注',
+
+  reason VARCHAR(500) NOT NULL COMMENT '纠错原因（必填）',
+  status TINYINT NOT NULL DEFAULT 0 COMMENT '0:待审批 1:已批准 2:已驳回',
+  reviewer_id INT DEFAULT NULL COMMENT '审批主管ID',
+  review_comment VARCHAR(500) DEFAULT NULL COMMENT '审批意见（驳回必填）',
+  reviewed_at DATETIME DEFAULT NULL COMMENT '审批时间',
+
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  pending_flag TINYINT GENERATED ALWAYS AS (CASE WHEN status = 0 THEN 1 ELSE NULL END) VIRTUAL,
+
+  UNIQUE KEY uq_record_pending (record_id, pending_flag),
+  KEY idx_correction_status (status),
+  KEY idx_correction_applicant (applicant_id),
+  KEY idx_correction_record (record_id),
+
+  FOREIGN KEY (record_id) REFERENCES production_records(id) ON DELETE CASCADE,
+  FOREIGN KEY (applicant_id) REFERENCES users(id),
+  FOREIGN KEY (reviewer_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='生产记录纠错申请表';
+
+-- 不可变修订版本表（每次批准一行；触发器禁止 UPDATE/DELETE；外键 RESTRICT 防删除）
+CREATE TABLE record_revisions (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  record_id INT NOT NULL COMMENT '被修订的生产记录ID',
+  correction_id INT NOT NULL COMMENT '来源纠错申请ID',
+  version_no INT NOT NULL COMMENT '修订后版本号（从1开始）',
+
+  old_completed_qty INT NOT NULL,
+  new_completed_qty INT NOT NULL,
+  old_defect_qty INT NOT NULL,
+  new_defect_qty INT NOT NULL,
+  old_work_hours DECIMAL(10,2) NOT NULL,
+  new_work_hours DECIMAL(10,2) NOT NULL,
+  old_defect_reason VARCHAR(500) DEFAULT NULL,
+  new_defect_reason VARCHAR(500) DEFAULT NULL,
+  old_remark VARCHAR(500) DEFAULT NULL,
+  new_remark VARCHAR(500) DEFAULT NULL,
+
+  old_order_completed_qty INT NOT NULL,
+  new_order_completed_qty INT NOT NULL,
+  old_order_defect_qty INT NOT NULL,
+  new_order_defect_qty INT NOT NULL,
+  old_order_work_hours DECIMAL(12,2) NOT NULL,
+  new_order_work_hours DECIMAL(12,2) NOT NULL,
+  old_order_status TINYINT NOT NULL,
+  new_order_status TINYINT NOT NULL,
+
+  approved_by INT NOT NULL,
+  approved_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  UNIQUE KEY uq_record_version (record_id, version_no),
+  KEY idx_revision_correction (correction_id),
+
+  FOREIGN KEY (record_id) REFERENCES production_records(id),
+  FOREIGN KEY (correction_id) REFERENCES record_corrections(id),
+  FOREIGN KEY (approved_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='生产记录不可变修订版本表（审计历史）';
 
 -- 插入测试数据：产线
 INSERT INTO production_lines (line_name, line_code, status) VALUES
@@ -125,3 +208,41 @@ INSERT INTO production_records (order_id, user_id, completed_qty, defect_qty, wo
 (3, 5, 1000, 10, 11.5, '外壳变形', '第二班'),
 (5, 7, 600, 20, 4.0, '线皮破损', '上午班'),
 (5, 7, 600, 25, 4.0, '接触不良', '下午班');
+
+-- =============================================================================
+-- 审计保护触发器（随 init:db 通过 MySQL 协议整体执行；
+-- 命令行 SOURCE 方式请改用 migrate_20260920_record_corrections.sql 中的 DELIMITER 版本）
+-- =============================================================================
+
+-- 生产记录：禁止修改标识/归属字段，数值纠错只能走审批流程
+DROP TRIGGER IF EXISTS trg_records_block_identity_update;
+CREATE TRIGGER trg_records_block_identity_update
+BEFORE UPDATE ON production_records
+FOR EACH ROW
+BEGIN
+  IF NEW.id <> OLD.id
+     OR NEW.order_id <> OLD.order_id
+     OR NEW.user_id <> OLD.user_id
+     OR IFNULL(NEW.created_at, '1970-01-01 00:00:00') <> IFNULL(OLD.created_at, '1970-01-01 00:00:00') THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = '生产记录标识/归属字段不可修改，数值纠错必须走纠错审批流程';
+  END IF;
+END;
+
+-- 修订版本：写入后不可更新
+DROP TRIGGER IF EXISTS trg_revisions_block_update;
+CREATE TRIGGER trg_revisions_block_update
+BEFORE UPDATE ON record_revisions
+FOR EACH ROW
+BEGIN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '修订版本为不可变审计记录，禁止更新';
+END;
+
+-- 修订版本：禁止删除
+DROP TRIGGER IF EXISTS trg_revisions_block_delete;
+CREATE TRIGGER trg_revisions_block_delete
+BEFORE DELETE ON record_revisions
+FOR EACH ROW
+BEGIN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '修订版本为不可变审计记录，禁止删除';
+END;

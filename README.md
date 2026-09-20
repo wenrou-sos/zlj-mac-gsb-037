@@ -21,10 +21,17 @@ label-060/
 │   │   ├── users.js          # 用户接口 (登录)
 │   │   ├── workOrders.js     # 工单 CRUD 接口
 │   │   ├── records.js        # 生产记录上报接口
+│   │   ├── corrections.js    # 纠错申请/审批/时间线接口
 │   │   └── stats.js          # 统计分析接口
+│   ├── services/
+│   │   ├── corrections.js    # 纠错事务服务（行锁/重算/审计）
+│   │   └── recompute.js      # 工单重算纯逻辑
+│   ├── middleware/auth.js    # 登录/角色鉴权
 │   ├── sql/
-│   │   └── init.sql          # 数据库初始化脚本 (含测试数据)
+│   │   ├── init.sql          # 数据库初始化脚本 (含测试数据)
+│   │   └── migrate_20260920_record_corrections.sql # 纠错功能 5.7 兼容迁移
 │   ├── initDB.js             # 一键初始化数据库脚本
+│   ├── runMigration.js       # 迁移脚本 Node 执行器 (npm run migrate)
 │   ├── app.js                # Express 应用入口
 │   ├── package.json
 │   └── .env                  # 数据库连接配置
@@ -42,7 +49,11 @@ label-060/
 │   │   │   ├── WorkOrders.vue    # 📋 工单管理 (主管)
 │   │   │   ├── Products.vue      # 📦 产品管理 (主管)
 │   │   │   ├── Report.vue        # ✏️ 生产上报 (操作工)
-│   │   │   └── Records.vue       # 📜 生产记录
+│   │   │   ├── Records.vue       # 📜 生产记录 (申请纠错/筛选/版本)
+│   │   │   └── Corrections.vue   # 🧾 纠错申请与审批 (差异/批准/驳回)
+│   │   ├── components/
+│   │   │   ├── CorrectionApplyDialog.vue  # 申请纠错对话框
+│   │   │   └── RevisionTimelineDialog.vue # 不可变修订时间线
 │   │   ├── App.vue
 │   │   ├── main.js
 │   │   └── style.css
@@ -180,7 +191,9 @@ npm run install:all
 | `products` | 产品型号表（5款预置产品） |
 | `users` | 用户表（主管+操作工） |
 | `work_orders` | 工单表（含累计统计） |
-| `production_records` | 生产记录表（流水） |
+| `production_records` | 生产记录表（流水，含当前版本号） |
+| `record_corrections` | 纠错申请表（待审批唯一约束防重复） |
+| `record_revisions` | 不可变修订版本表（审计历史，触发器禁改禁删） |
 
 ### 工单状态码
 | 状态值 | 含义 |
@@ -205,12 +218,71 @@ npm run install:all
 | POST | `/api/workorders` | 创建工单 |
 | PUT | `/api/workorders/:id` | 更新工单（含状态变更） |
 | DELETE | `/api/workorders/:id` | 删除工单 |
-| GET | `/api/records` | 生产记录（分页） |
+| GET | `/api/records` | 生产记录（分页，操作工强制仅本人，支持 correction_status 筛选） |
+| GET | `/api/records/:id` | 单条生产记录（含版本信息，操作工仅可查本人） |
 | POST | `/api/records` | 上报生产进度（事务更新工单） |
+| GET | `/api/corrections` | 纠错申请列表（主管全部/操作工仅本人，支持 status、applicant_id） |
+| POST | `/api/corrections` | 操作工对本人记录提交纠错申请（行锁+唯一索引防重复） |
+| GET | `/api/corrections/:id` | 纠错申请详情（含字段差异 diff） |
+| POST | `/api/corrections/:id/approve` | 主管批准：生成不可变修订并重算工单（事务，409 防并发） |
+| POST | `/api/corrections/:id/reject` | 主管驳回（审批意见必填，记录/工单不变） |
+| GET | `/api/corrections/records/:id/timeline` | 记录修订时间线（原始上报 + 各修订版本） |
 | GET | `/api/stats/overview` | 全局概览统计 |
 | GET | `/api/stats/by-line` | 按产线统计 |
 | GET | `/api/stats/orders-rank` | 工单完成率排行 |
 | GET | `/api/stats/recent-records` | 最近上报记录 |
+
+## 生产记录纠错审批（审计闭环）
+
+操作工发现自己上报的记录有误时，**不能直接改原记录**，必须走申请-审批流程：
+
+```
+操作工（仅本人记录）          主管                    系统
+      │  填写修正值+原因        │                       │
+      ├────── 提交申请 ───────►►│                       │
+      │                  查看原值/新值差异              │
+      │                    ┌────┴────┐                  │
+      │                  批准        驳回(必填意见)      │
+      │                    └────┬────┘                  │
+      │                         │ 同一事务（FOR UPDATE 锁定申请/记录/工单）：
+      │                         │  1. 原记录更新为修正值，版本号 +1
+      │                         │  2. 写入不可变 record_revisions（前后值+工单快照）
+      │                         │  3. 按全部最新有效记录重算工单：
+      │                         │     完成数/不良数/工时/状态/不良率告警
+      │  ◄──── 结果通知 ────────┘                       │
+      │  驳回后可修改重新提交；批准后可对新版本再次申请     │
+```
+
+**安全与一致性保证：**
+
+- **越权防护**：所有 `/api/corrections/*` 需登录（请求头 `x-user-id`）；操作工只能申请/查看本人记录，审批仅主管；服务端二次校验，不信任前端。
+- **防重复申请**：`record_corrections(record_id, pending_flag)` 虚拟列唯一索引（MySQL 5.7 兼容），同一记录存在待审批申请时数据库直接拒绝第二份。
+- **防并发审批**：固定加锁顺序 `生产记录 → 工单 → 申请`，配合 `UPDATE ... WHERE status=0` 条件更新，并发批准/驳回恰好一方成功（另一方 409）。
+- **完整回滚**：任一步骤失败事务整体回滚，申请/记录/工单保持原状，不残留半成品修订。
+- **不可变审计**：`record_revisions` 触发器禁止 UPDATE/DELETE；生产记录标识字段（id/order_id/user_id/created_at）触发器禁止篡改；修订版本外键 RESTRICT，产生过修订的记录不可被删除。
+- **状态重算规则**：已完成(2)/已暂停(3) 属人工决策不被覆盖；待生产(0)/生产中(1) 按汇总结果自动判定（全部记录改回 0 时工单回退为待生产）。
+
+### 迁移（已有数据库升级，兼容 MySQL 5.7）
+
+```bash
+cd server
+# 方式一：Node 执行器（无需安装 mysql 客户端）
+npm run migrate migrate_20260920_record_corrections.sql
+# 方式二：mysql 命令行
+mysql -u root -p < sql/migrate_20260920_record_corrections.sql
+```
+全新部署直接 `npm run init:db`，`init.sql` 已包含纠错表与触发器。
+
+### 纠错相关测试
+
+```bash
+cd server
+npm test                                  # 重算纯逻辑单测（无需数据库）
+PORT=3002 node app.js                     # 终端1：启动服务
+node test/corrections.test.js             # 终端2：权限/并发/回滚/重算集成测试
+node test/api.test.js                     # 原有 API 回归
+cd ../client && npm test                  # 全部 Vue SFC 编译测试
+```
 
 ## 业务流程
 
